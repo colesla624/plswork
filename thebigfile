@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lucid Dream Runner</title>
+<style>
+  :root {
+    --bg1: #0b1026;
+    --bg2: #1b2250;
+    --accent: #8a5cff;
+    --moon: #ffd46b;
+    --player: #61e1ff;
+    --glitch: #ff5c8a;
+    --text: #e9ecff;
+  }
+  html, body {
+    margin: 0; height: 100%; background: radial-gradient(1200px at 50% 20%, var(--bg2), var(--bg1));
+    color: var(--text); font-family: system-ui, sans-serif;
+  }
+  .wrap {
+    display: grid; place-items: center; min-height: 100vh; padding: 16px;
+  }
+  .hud {
+    display: flex; gap: 16px; align-items: center; justify-content: center; margin-bottom: 8px;
+    font-weight: 600; font-size: 14px; text-shadow: 0 2px 10px rgba(0,0,0,0.5);
+  }
+  .btns { display: flex; gap: 8px; }
+  button {
+    background: linear-gradient(180deg, #2d3a7a, #202859);
+    color: var(--text); border: 1px solid #4450a8; border-radius: 8px; padding: 8px 12px;
+    cursor: pointer; box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+  }
+  button:hover { filter: brightness(1.08); }
+  canvas {
+    width: min(92vw, 720px); height: min(60vh, 420px); max-width: 720px; max-height: 420px;
+    background: radial-gradient(600px at 60% 40%, rgba(138,92,255,0.15), rgba(0,0,0,0) 60%),
+                radial-gradient(900px at 30% 80%, rgba(255,212,107,0.12), rgba(0,0,0,0) 70%);
+    border: 1px solid #2b2f5c; border-radius: 16px; box-shadow: 0 20px 40px rgba(0,0,0,0.5), inset 0 0 30px rgba(255,255,255,0.05);
+  }
+  .tips {
+    margin-top: 10px; font-size: 12px; opacity: 0.85; text-align: center;
+  }
+  /* Touch controls */
+  .touch-controls {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-top: 12px;
+    gap: 6px;
+  }
+  .touch-controls .ctrl {
+    font-size: 20px;
+    width: 50px; height: 50px;
+    border-radius: 50%;
+    border: none;
+    background: #2d3a7a;
+    color: #e9ecff;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+  }
+  .touch-controls div { display: flex; gap: 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hud">
+    <div>Score: <span id="score">0</span></div>
+    <div>Lives: <span id="lives">3</span></div>
+    <div>Level: <span id="level">1</span></div>
+    <div class="btns">
+      <button id="startBtn">Start</button>
+      <button id="pauseBtn">Pause</button>
+      <button id="resetBtn">Reset</button>
+    </div>
+  </div>
+  <canvas id="game" width="720" height="420"></canvas>
+  <div class="tips">Move with Arrow Keys, WASD, buttons, or swipe. Collect moons, avoid glitches.</div>
+  <!-- Touch controls -->
+  <div class="touch-controls">
+    <button class="ctrl" id="up">▲</button>
+    <div>
+      <button class="ctrl" id="left">◀</button>
+      <button class="ctrl" id="down">▼</button>
+      <button class="ctrl" id="right">▶</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById("game");
+  const c = canvas.getContext("2d");
+  const scoreEl = document.getElementById("score");
+  const livesEl = document.getElementById("lives");
+  const levelEl = document.getElementById("level");
+  const startBtn = document.getElementById("startBtn");
+  const pauseBtn = document.getElementById("pauseBtn");
+  const resetBtn = document.getElementById("resetBtn");
+
+  const W = canvas.width, H = canvas.height;
+  let running = false, paused = false, last = 0;
+  let score = 0, lives = 3, level = 1;
+  let t = 0;
+  const keys = { up:false, down:false, left:false, right:false };
+
+  const player = { x: W*0.15, y: H*0.5, r: 14, vx:0, vy:0, speed:220, drag:0.88 };
+  const moons = [], glitches = [], stars = [];
+
+  const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+  const rnd = (min,max)=>min+Math.random()*(max-min);
+
+  function spawnStar(){ stars.push({x:rnd(0,W),y:rnd(0,H),r:rnd(0.5,1.8),tw:rnd(0.002,0.005),phase:rnd(0,Math.PI*2)}); }
+  for(let i=0;i<160;i++) spawnStar();
+  function spawnMoon(){ moons.push({x:rnd(W*0.35,W*0.95),y:rnd(20,H-20),r:rnd(8,12),vx:rnd(-10,10),vy:rnd(-10,10)}); }
+  function spawnGlitch(){ const s=rnd(12,20); glitches.push({x:rnd(W*0.4,W*0.95),y:rnd(20,H-20),w:s,h:s,vx:rnd(-40,-10)-level*6,vy:rnd(-25,25),spin:rnd(-0.05,0.05),a:rnd(0,Math.PI*2)}); }
+
+  // Keyboard
+  window.addEventListener("keydown",e=>{
+    const k=e.key.toLowerCase();
+    if(k==="arrowup"||k==="w") keys.up=true;
+    if(k==="arrowdown"||k==="s") keys.down=true;
+    if(k==="arrowleft"||k==="a") keys.left=true;
+    if(k==="arrowright"||k==="d") keys.right=true;
+    if(k==="p") paused=!paused;
+  });
+  window.addEventListener("keyup",e=>{
+    const k=e.key.toLowerCase();
+    if(k==="arrowup"||k==="w") keys.up=false;
+    if(k==="arrowdown"||k==="s") keys.down=false;
+    if(k==="arrowleft"||k==="a") keys.left=false;
+    if(k==="arrowright"||k==="d") keys.right=false;
+  });
+
+  // Touch buttons
+  ["up","down","left","right"].forEach(id=>{
+    const btn=document.getElementById(id);
+    btn.addEventListener("touchstart",()=>keys[id]=true);
+    btn.addEventListener("touchend",()=>keys[id]=false);
+  });
+
+  // Swipe gestures
+  let sx=0,sy=0;
+  canvas.addEventListener("touchstart",e=>{
+    const t=e.touches[0]; sx=t.clientX; sy=t.clientY;
+  });
+  canvas.addEventListener("touchend",e=>{
+    const t=e.changedTouches[0]; const dx=t.clientX-sx, dy=t.clientY-sy;
+    const ax=Math.abs(dx), ay=Math.abs(dy);
+    keys.up=keys.down=keys.left=keys.right=false;
+    if(ax>ay){ if(dx>30) keys.right=true; else if(dx<-30) keys.left=true; }
+    else { if(dy>30) keys.down=true; else if(dy<-30) keys.up=true; }
+    setTimeout(()=>{keys.up=keys.down=keys.left=keys.right=false;},200);
+  });
+
+  // Buttons
+  startBtn.onclick=()=>{ if(!running) startGame(); paused=false; running=true; };
+  pauseBtn.onclick=()=>paused=!paused;
+  resetBtn.onclick=()=>resetGame();
+
+  function
